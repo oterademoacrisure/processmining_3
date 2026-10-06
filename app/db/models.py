@@ -325,3 +325,31 @@ class PipelineEvent(Base):
         # global "recent activity" feed (tenant, newest first)
         Index("ix_pipeline_event_tenant_created", "tenant_id", "created_at"),
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SOURCE-CONFIG: key/value entries from the UI "Source Config" page, one row
+# per (tenant, key). Written only through core-service /api/v1/source-configs
+# (called by config-service and the UI). Key is immutable; only value is edited.
+# Deliberately separate from the other API's source_config table.
+# ─────────────────────────────────────────────────────────────────────────────
+class ConfigKV(Base):
+    __tablename__ = "config_kv"
+
+    config_kv_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenant.tenant_id", ondelete="CASCADE"), nullable=False
+    )
+    key: Mapped[str] = mapped_column(String(128), nullable=False)
+    value: Mapped[str] = mapped_column(String(2048), nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "key", name="uq_config_kv_tenant_key"),
+    )

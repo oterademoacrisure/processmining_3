@@ -10,6 +10,7 @@
 # Ports on the host:
 #   8100  reader-service  (polled by core-service)
 #   8000  core-service    (UI-facing REST + background pipeline)
+#   8200  config-service  (source configuration API → core-service)  # SOURCE-CONFIG
 #   8501  ui-service      (Streamlit dashboard)
 #   5432  postgres        (dev only — override in prod)
 
@@ -72,6 +73,22 @@ services:
     volumes:
       # Vector index + any local file outputs the sinks produce (mock SNOW/Jira dumps).
       - core-data:/app/.data
+    restart: unless-stopped
+
+  # SOURCE-CONFIG: source-configuration API. No DB access — saves/lists/deletes
+  # are forwarded to core-service (/api/v1/source-configs).
+  config-service:
+    build:
+      context: .
+      dockerfile: services/config/Dockerfile
+    image: serverops/config:latest
+    ports:
+      - "8200:8200"
+    depends_on:
+      core-service:
+        condition: service_started
+    environment:
+      AGGREGATOR_SERVICE_URL: http://core-service:8000
     restart: unless-stopped
 
   ui-service:

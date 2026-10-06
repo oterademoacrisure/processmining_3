@@ -421,7 +421,8 @@ PAGE = st.sidebar.radio(
     "View",
     # Live Activity first → it's the default landing view (real-time dashboard),
     # the most compelling entry point for a demo/business audience.
-    ["Live Activity", "Overview", "Root-Cause Reports", "Pending Approvals", "Findings", "Events Explorer", "Cases", "Precedent Memory"],
+    ["Live Activity", "Overview", "Root-Cause Reports", "Pending Approvals", "Findings", "Events Explorer", "Cases", "Precedent Memory",
+     "Source Config"],  # SOURCE-CONFIG
     label_visibility="collapsed",
 )
 
@@ -1163,6 +1164,73 @@ def page_live_activity():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Source Config (SOURCE-CONFIG — key/value entries stored via core-service)
+# ─────────────────────────────────────────────────────────────────────────────
+@st.dialog("Add entry")
+def _add_source_config_dialog(existing_keys: set[str]):
+    key = st.text_input("Key", placeholder="e.g. vote").strip()
+    value = st.text_input("Value", placeholder="e.g. http://host/logs?app=vote&tail=200").strip()
+    if st.button("Save", type="primary"):
+        if not key or not value:
+            st.error("Key and Value are both required.")
+        elif key in existing_keys:
+            st.error(f"Key '{key}' already exists — edit its value in the grid.")
+        else:
+            try:
+                api_client.save_source_config(int(TENANT_ID), key, value)
+                st.rerun()
+            except Exception as e:
+                st.error(f"Save failed: {e}")
+
+
+def page_source_config():
+    try:
+        rows = api_client.list_source_configs(int(TENANT_ID))
+    except Exception as e:
+        st.error(f"Could not load source configs: {e}")
+        return
+    existing = {r["key"]: r["value"] for r in rows}
+
+    # ── Grid: Value editable, Key read-only ──
+    st.subheader(f"Configuration ({len(rows)})")
+    changed: list[tuple[str, str]] = []
+    if rows:
+        edited = st.data_editor(
+            pd.DataFrame(rows)[["key", "value"]],
+            key="source_config_grid",
+            use_container_width=True,
+            hide_index=True,
+            disabled=["key"],
+            column_config={
+                "key": st.column_config.TextColumn("Key"),
+                "value": st.column_config.TextColumn("Value", required=True),
+            },
+        )
+        changed = [
+            (k, (v or "").strip())
+            for k, v in zip(edited["key"], edited["value"])
+            if (v or "").strip() != existing[k]
+        ]
+    else:
+        st.info("No entries yet.")
+
+    c1, c2, _ = st.columns([1, 1, 6])
+    if c1.button(f"Update ({len(changed)})", disabled=not changed, use_container_width=True):
+        if any(not v for _, v in changed):
+            st.error("Value must not be empty.")
+        else:
+            try:
+                for k, v in changed:
+                    api_client.save_source_config(int(TENANT_ID), k, v)
+                st.rerun()
+            except Exception as e:
+                st.error(f"Update failed: {e}")
+    # Add is kept for testing only — entries normally come from config-service.
+    if c2.button("Add", use_container_width=True):
+        _add_source_config_dialog(set(existing))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Router
 # ─────────────────────────────────────────────────────────────────────────────
 PAGES = {
@@ -1174,5 +1242,6 @@ PAGES = {
     "Events Explorer":    page_events,
     "Cases":              page_cases,
     "Precedent Memory":   page_precedent_memory,
+    "Source Config":      page_source_config,  # SOURCE-CONFIG
 }
 PAGES[PAGE]()

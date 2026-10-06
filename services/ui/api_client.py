@@ -91,3 +91,24 @@ def precedent_search(tenant_id: int, query: str, k: int = 5) -> dict[str, Any]:
         )
         r.raise_for_status()
         return r.json()
+
+
+# ── /api/v1/source-configs — Source Config page ─────────────────────────────
+# SOURCE-CONFIG: key/value entries stored by core-service.
+def list_source_configs(tenant_id: int) -> list[dict[str, Any]]:
+    with _client() as c:
+        r = c.get("/api/v1/source-configs", params={"tenant_id": tenant_id})
+        r.raise_for_status()
+        return r.json()
+
+
+def save_source_config(tenant_id: int, key: str, value: str) -> dict[str, Any]:
+    """Creates the key, or changes its value if it already exists."""
+    with _client() as c:
+        r = c.put(
+            "/api/v1/source-configs",
+            json={"tenant_id": tenant_id, "key": key, "value": value},
+        )
+        r.raise_for_status()
+        return r.json()
+

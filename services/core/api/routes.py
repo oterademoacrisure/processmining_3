@@ -1,9 +1,10 @@
 """APIFICATION: core-service HTTP routes (UI-facing).
 
-Three groups:
+Four groups:
   1. /query          — named-view escape hatch for the UI's read paths
   2. /actions/...    — write path for operator decisions (wraps decide_action)
   3. /precedent/...  — read paths for the FAISS-backed Precedent Memory page
+  4. /source-configs — SOURCE-CONFIG: key/value storage (Source Config page)
 """
 from __future__ import annotations
 
@@ -16,9 +17,10 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select, text
+from sqlalchemy import delete, func, select, text  # SOURCE-CONFIG: delete, func
+from sqlalchemy.dialects.postgresql import insert as pg_insert  # SOURCE-CONFIG: upsert
 
-from app.db.models import HistoricalIncident
+from app.db.models import ConfigKV, HistoricalIncident  # SOURCE-CONFIG: ConfigKV
 from app.db.session import SessionLocal
 from app.paths import PROJECT_ROOT
 from app.remediation.decisions import decide_action
@@ -261,3 +263,68 @@ def precedent_search(body: PrecedentSearchRequest) -> PrecedentSearchResponse:
             close_notes=(r.close_notes if r else None),
         ))
     return PrecedentSearchResponse(embedder_mode=getattr(emb, "mode", "unknown"), hits=out)
+
+
+# ── /source-configs — key/value storage for the Source Config page ──────────
+# SOURCE-CONFIG: rows live in config_kv, one per (tenant_id, key). PUT creates
+# a key or changes its value; the key itself never changes.
+class SourceConfigIn(BaseModel):
+    tenant_id: int = 1
+    key: str
+    value: str
+
+
+def _source_config_dict(r: ConfigKV) -> dict[str, Any]:
+    return {
+        "tenant_id": r.tenant_id,
+        "key": r.key,
+        "value": r.value,
+        "created_at": _jsonify(r.created_at),
+        "updated_at": _jsonify(r.updated_at),
+    }
+
+
+@router.put("/source-configs")
+def upsert_source_config(body: SourceConfigIn) -> dict[str, Any]:
+    key, value = body.key.strip(), body.value.strip()
+    if not key or not value:
+        raise HTTPException(status_code=422, detail="key and value must not be empty")
+    stmt = (
+        pg_insert(ConfigKV)
+        .values(tenant_id=body.tenant_id, key=key, value=value)
+        .on_conflict_do_update(
+            constraint="uq_config_kv_tenant_key",
+            set_={"value": value, "updated_at": func.now()},
+        )
+        .returning(ConfigKV)
+    )
+    with SessionLocal() as s:
+        row = s.scalars(stmt).one()
+        out = _source_config_dict(row)
+        s.commit()
+    return out
+
+
+@router.get("/source-configs")
+def list_source_configs(tenant_id: int = 1) -> list[dict[str, Any]]:
+    with SessionLocal() as s:
+        rows = s.scalars(
+            select(ConfigKV)
+            .where(ConfigKV.tenant_id == tenant_id)
+            .order_by(ConfigKV.key)
+        ).all()
+        return [_source_config_dict(r) for r in rows]
+
+
+@router.delete("/source-configs")
+def delete_source_config(key: str, tenant_id: int = 1) -> dict[str, Any]:
+    with SessionLocal() as s:
+        n = s.execute(
+            delete(ConfigKV)
+            .where(ConfigKV.tenant_id == tenant_id)
+            .where(ConfigKV.key == key)
+        ).rowcount
+        s.commit()
+    if not n:
+        raise HTTPException(status_code=404, detail="source config not found")
+    return {"deleted": n}
